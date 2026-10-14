@@ -1,0 +1,14 @@
+image:
+  repository: rom1dgg/cast-service
+  pullPolicy: Always
+  tag: "latest"
+
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30002
+  targetPort: 8000
+
+env:
+  - name: DATABASE_URI
+    value: "postgresql://cast_db_username:cast_db_password@cast-db-postgresql.dev.svc.cluster.local:5432/cast_db_dev"

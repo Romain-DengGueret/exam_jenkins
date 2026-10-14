@@ -1,0 +1,14 @@
+image:
+  repository: rom1dgg/movie-service
+  pullPolicy: Always
+  tag: "latest"
+
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30013
+  targetPort: 8000
+
+env:
+  - name: DATABASE_URI
+    value: "postgresql://movie_db_username:movie_db_password@movie-db-postgresql.qa.svc.cluster.local:5432/movie_db_qa"

@@ -35,6 +35,12 @@ pipeline {
                 docker push rom1dgg/movie-service:${IMAGE_TAG}
                 '''
             }
+            post {
+                always {
+                    // Logout tant qu'on est encore dans le contexte du node
+                    sh 'docker logout || true'
+                }
+            }
         }
 
         stage('Deploy databases') {
@@ -64,7 +70,12 @@ pipeline {
         }
 
         stage('Deploy services') {
-            when { branch 'master' }    // aucun déploiement hors master
+            when {
+                anyOf {
+                    branch 'master'
+                    branch 'main'
+                }
+            }
             steps {
                 sh 'helm upgrade --install cast-service ./charts -n ${ENVIRONMENT} -f ./charts/values-${ENVIRONMENT}.yaml'
                 sh 'helm upgrade --install movie-service ./charts -n ${ENVIRONMENT} -f ./charts/values-movie-${ENVIRONMENT}.yaml'
@@ -72,6 +83,12 @@ pipeline {
         }
 
         stage('Wait for rollout') {
+            when {
+                anyOf {
+                    branch 'master'
+                    branch 'main'
+                }
+            }
             steps {
                 sh 'kubectl rollout status deploy/cast-service-fastapiapp -n ${ENVIRONMENT} --timeout=180s'
                 sh 'kubectl rollout status deploy/movie-service-fastapiapp -n ${ENVIRONMENT} --timeout=180s'
@@ -79,6 +96,12 @@ pipeline {
         }
 
         stage('Smoke tests') {
+            when {
+                anyOf {
+                    branch 'master'
+                    branch 'main'
+                }
+            }
             steps {
                 sh '''
                 export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
@@ -94,10 +117,14 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout || true'
-            cleanWs()
+            // Le logout est déplacé dans le post du stage 'Build & Push images'
+            // (contexte node garanti). Ici, cleanWs est ré-alloué explicitement
+            // pour éviter le MissingContextVariableException si l'agent n'est plus là.
+            node {
+                cleanWs()
+            }
         }
-        success   { echo "Déploiement ${params.ENVIRONMENT} réussi ✅" }
-        failure   { echo "Pipeline FAILED sur ${params.ENVIRONMENT}" }
+        success { echo "Déploiement ${params.ENVIRONMENT} réussi ✅" }
+        failure { echo "Pipeline FAILED sur ${params.ENVIRONMENT}" }
     }
 }

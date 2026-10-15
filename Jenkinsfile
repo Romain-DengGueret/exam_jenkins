@@ -50,5 +50,28 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploiement en dev') {
+            environment {
+                KUBECONFIG = credentials("config")
+            }
+            steps {
+                script {
+                    sh '''
+                    rm -Rf ~/.kube/
+                    mkdir ~/.kube/
+                    cat $KUBECONFIG > ~/.kube/config
+
+                    cp charts/values-dev.yaml cast-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" cast-values.yml
+                    helm upgrade --install cast-service ./charts -n dev -f cast-values.yml
+
+                    cp charts/values-movie-dev.yaml movie-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" movie-values.yml
+                    helm upgrade --install movie-service ./charts -n dev -f movie-values.yml
+                    '''
+                }
+            }
+        }
     }
 }

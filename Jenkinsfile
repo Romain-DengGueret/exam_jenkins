@@ -1,111 +1,48 @@
 pipeline {
-    agent any
-
     environment {
-        DOCKERHUB_CREDS = credentials('dockerhub')
-        IMAGE_TAG       = "latest"
-        DEPLOY_BRANCH   = "${env.GIT_BRANCH ?: 'origin/main'}"
+        DOCKER_ID   = "rom1dgg"
+        CAST_IMAGE  = "cast-service"
+        MOVIE_IMAGE = "movie-service"
+        DOCKER_TAG  = "v.${BUILD_ID}.0"   // tag incrémenté à chaque build
     }
-
-    parameters {
-        choice(
-            name: 'ENVIRONMENT',
-            choices: ['dev', 'qa', 'staging', 'prod'],
-            description: 'Environnement de déploiement'
-        )
-    }
+    agent any
 
     stages {
 
-        stage('Checkout') {
+        stage('Docker Build') {
             steps {
-                checkout scm
-                sh 'echo "Branche courante : ${GIT_BRANCH}"'   // debug : à retirer après vérification
-            }
-        }
-
-        stage('Docker login') {
-            steps {
-                sh 'echo "$DOCKERHUB_CREDS_PSW" | docker login -u "$DOCKERHUB_CREDS_USR" --password-stdin'
-            }
-        }
-
-        stage('Build & Push images') {
-            steps {
-                sh '''
-                docker build -t rom1dgg/cast-service:${IMAGE_TAG} ./cast-service
-                docker build -t rom1dgg/movie-service:${IMAGE_TAG} ./movie-service
-                docker push rom1dgg/cast-service:${IMAGE_TAG}
-                docker push rom1dgg/movie-service:${IMAGE_TAG}
-                '''
-            }
-        }
-
-        stage('Deploy databases') {
-            steps {
-                sh '''
-                helm status cast-db -n ${ENVIRONMENT} >/dev/null 2>&1 || \
-                  helm install cast-db bitnami/postgresql -n ${ENVIRONMENT} \
-                    --set auth.username=cast_db_username \
-                    --set auth.password=cast_db_password \
-                    --set auth.database=cast_db_${ENVIRONMENT}
-                helm status movie-db -n ${ENVIRONMENT} >/dev/null 2>&1 || \
-                  helm install movie-db bitnami/postgresql -n ${ENVIRONMENT} \
-                    --set auth.username=movie_db_username \
-                    --set auth.password=movie_db_password \
-                    --set auth.database=movie_db_${ENVIRONMENT}
-                '''
-            }
-        }
-
-        stage('Approval Production') {
-            when { expression { params.ENVIRONMENT == 'prod' } }
-            steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    input message: "Déployer ${env.JOB_NAME} en PRODUCTION ?", ok: 'Déployer'
+                script {
+                    sh '''
+                    docker build -t $DOCKER_ID/$CAST_IMAGE:$DOCKER_TAG ./cast-service
+                    docker build -t $DOCKER_ID/$MOVIE_IMAGE:$DOCKER_TAG ./movie-service
+                    '''
                 }
             }
         }
 
-        stage('Deploy services') {
-            when { expression { DEPLOY_BRANCH ==~ /.*(master|main).*/ } }
+        stage('Docker Run') {
             steps {
-                sh 'helm upgrade --install cast-service ./charts -n ${ENVIRONMENT} -f ./charts/values-${ENVIRONMENT}.yaml'
-                sh 'helm upgrade --install movie-service ./charts -n ${ENVIRONMENT} -f ./charts/values-movie-${ENVIRONMENT}.yaml'
+                script {
+                    sh '''
+                    docker rm -f jenkins-cast || true
+                    docker run -d -p 8001:8000 --name jenkins-cast \
+                      -e DATABASE_URI="postgresql://cast_db_username:cast_db_password@cast-db:5432/cast_db_dev" \
+                      $DOCKER_ID/$CAST_IMAGE:$DOCKER_TAG
+                    sleep 10
+                    '''
+                }
             }
         }
 
-        stage('Wait for rollout') {
-            when { expression { DEPLOY_BRANCH ==~ /.*(master|main).*/ } }
+        stage('Test Acceptance') {
             steps {
-                sh 'kubectl rollout status deploy/cast-service-fastapiapp -n ${ENVIRONMENT} --timeout=180s'
-                sh 'kubectl rollout status deploy/movie-service-fastapiapp -n ${ENVIRONMENT} --timeout=180s'
+                script {
+                    sh '''
+                    curl -sf localhost:8001/docs || (echo "Service KO" && exit 1)
+                    docker rm -f jenkins-cast
+                    '''
+                }
             }
         }
-
-        stage('Smoke tests') {
-            when { expression { DEPLOY_BRANCH ==~ /.*(master|main).*/ } }
-            steps {
-                sh '''
-                export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
-                export CAST_PORT=$(kubectl get -n ${ENVIRONMENT} -o jsonpath="{.spec.ports[0].nodePort}" svc cast-service-fastapiapp)
-                export MOVIE_PORT=$(kubectl get -n ${ENVIRONMENT} -o jsonpath="{.spec.ports[0].nodePort}" svc movie-service-fastapiapp)
-                curl -sf http://$NODE_IP:$CAST_PORT/api/v1/checkapi || (echo "cast-service KO" && exit 1)
-                curl -sf http://$NODE_IP:$MOVIE_PORT/api/v1/checkapi || (echo "movie-service KO" && exit 1)
-                echo "Smoke tests OK"
-                '''
-            }
-        }
-    }
-
-    post {
-        always {
-            script {
-                try { sh 'docker logout || true' } catch (err) { echo "Logout ignoré (pas de contexte node)" }
-                try { cleanWs() }               catch (err) { echo "cleanWs ignoré (pas de contexte node)" }
-            }
-        }
-        success { echo "Déploiement ${params.ENVIRONMENT} réussi ✅" }
-        failure { echo "Pipeline FAILED sur ${params.ENVIRONMENT}" }
     }
 }

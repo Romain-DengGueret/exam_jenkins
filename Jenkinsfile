@@ -4,7 +4,6 @@ pipeline {
     environment {
         DOCKERHUB_CREDS = credentials('dockerhub')
         IMAGE_TAG       = "latest"
-        // Indiquez ici la branche de déploiement si GIT_BRANCH n'est pas renseigné
         DEPLOY_BRANCH   = "${env.GIT_BRANCH ?: 'origin/main'}"
     }
 
@@ -101,9 +100,9 @@ pipeline {
 
     post {
         always {
-            node {
-                sh 'docker logout || true'
-                cleanWs()
+            script {
+                try { sh 'docker logout || true' } catch (err) { echo "Logout ignoré (pas de contexte node)" }
+                try { cleanWs() }               catch (err) { echo "cleanWs ignoré (pas de contexte node)" }
             }
         }
         success { echo "Déploiement ${params.ENVIRONMENT} réussi ✅" }

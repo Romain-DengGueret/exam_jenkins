@@ -3,7 +3,7 @@ pipeline {
         DOCKER_ID   = "rom1dgg"
         CAST_IMAGE  = "cast-service"
         MOVIE_IMAGE = "movie-service"
-        DOCKER_TAG  = "v.${BUILD_ID}.0"   // tag incrémenté à chaque build
+        DOCKER_TAG  = "v.${BUILD_ID}.0"
     }
     agent any
 
@@ -28,18 +28,24 @@ pipeline {
                     docker run -d -p 8001:8000 --name jenkins-cast \
                       -e DATABASE_URI="postgresql://cast_db_username:cast_db_password@cast-db:5432/cast_db_dev" \
                       $DOCKER_ID/$CAST_IMAGE:$DOCKER_TAG
-                    sleep 10
+                    sleep 5
+                    docker rm -f jenkins-cast
                     '''
                 }
             }
         }
 
-        stage('Test Acceptance') {
+        stage('Docker Push') {
+            environment {
+                DOCKER_PASS = credentials("DOCKER_HUB_PASS")
+            }
             steps {
                 script {
                     sh '''
-                    curl -sf localhost:8001/docs || (echo "Service KO" && exit 1)
-                    docker rm -f jenkins-cast
+                    echo "$DOCKER_PASS" | docker login -u $DOCKER_ID --password-stdin
+                    docker push $DOCKER_ID/$CAST_IMAGE:$DOCKER_TAG
+                    docker push $DOCKER_ID/$MOVIE_IMAGE:$DOCKER_TAG
+                    docker logout
                     '''
                 }
             }

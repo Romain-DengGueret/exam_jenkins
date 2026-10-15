@@ -73,5 +73,79 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploiement en qa') {
+            environment {
+                KUBECONFIG = credentials("config")
+            }
+            steps {
+                script {
+                    sh '''
+                    rm -Rf ~/.kube/
+                    mkdir ~/.kube/
+                    cat $KUBECONFIG > ~/.kube/config
+
+                    cp charts/values-qa.yaml cast-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" cast-values.yml
+                    helm upgrade --install cast-service ./charts -n qa -f cast-values.yml
+
+                    cp charts/values-movie-qa.yaml movie-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" movie-values.yml
+                    helm upgrade --install movie-service ./charts -n qa -f movie-values.yml
+                    '''
+                }
+            }
+        }
+
+        stage('Deploiement en staging') {
+            environment {
+                KUBECONFIG = credentials("config")
+            }
+            steps {
+                script {
+                    sh '''
+                    rm -Rf ~/.kube/
+                    mkdir ~/.kube/
+                    cat $KUBECONFIG > ~/.kube/config
+
+                    cp charts/values-staging.yaml cast-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" cast-values.yml
+                    helm upgrade --install cast-service ./charts -n staging -f cast-values.yml
+
+                    cp charts/values-movie-staging.yaml movie-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" movie-values.yml
+                    helm upgrade --install movie-service ./charts -n staging -f movie-values.yml
+                    '''
+                }
+            }
+        }
+
+        stage('Deploiement en prod') {
+            when { branch 'master' }   // déploiement prod uniquement depuis master
+            environment {
+                KUBECONFIG = credentials("config")
+            }
+            steps {
+                // Validation manuelle obligatoire avant la prod (timeout 15 min)
+                timeout(time: 15, unit: "MINUTES") {
+                    input message: "Déployer en PRODUCTION ?", ok: 'Oui, déployer'
+                }
+                script {
+                    sh '''
+                    rm -Rf ~/.kube/
+                    mkdir ~/.kube/
+                    cat $KUBECONFIG > ~/.kube/config
+
+                    cp charts/values-prod.yaml cast-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" cast-values.yml
+                    helm upgrade --install cast-service ./charts -n prod -f cast-values.yml
+
+                    cp charts/values-movie-prod.yaml movie-values.yml
+                    sed -i "s+tag:.*+tag: ${DOCKER_TAG}+g" movie-values.yml
+                    helm upgrade --install movie-service ./charts -n prod -f movie-values.yml
+                    '''
+                }
+            }
+        }
     }
 }
